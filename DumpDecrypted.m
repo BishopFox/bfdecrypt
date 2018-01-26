@@ -24,14 +24,27 @@
 #include <objc/runtime.h>
 #include <mach/mach.h>
 #include <err.h>
-#include <sys/param.h>
 #include <mach-o/ldsyms.h>
+#include <libkern/OSCacheControl.h>
+#include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <sys/uio.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <errno.h>
+#import "SSZipArchive.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#include <libkern/OSCacheControl.h>
-#include <sys/stat.h>
 #include "DumpDecrypted.h"
-#import "SSZipArchive.h"
+
+//#define DEBUG(...) NSLog(__VA_ARGS__);
+#define DEBUG(...) {}
 
 #define swap32(value) (((value & 0xFF000000) >> 24) | ((value & 0x00FF0000) >> 8) | ((value & 0x0000FF00) << 8) | ((value & 0x000000FF) << 24) )
 
@@ -263,6 +276,7 @@
 			NSLog(@"[+] Close files.\n");	
 			close(fd);
 			close(outfd);
+			sync();
 			NSLog(@"[+] Dump complete.\n");	
 			
 			return true;
@@ -304,9 +318,114 @@
 	return true;
 } 
 
+-(NSString *)IPAPath {
+	return [NSString stringWithFormat:@"%@/decrypted-app.ipa", [self docPath]];
+}
+
+// Based on code taken from Bishop Fox Firecat
+-(int)getSocketForPort:(int)listenPort {
+	struct sockaddr_in a;
+	int IPAServerSock, clientSock;
+	int yes = 1;
+
+	// get a fresh juicy socket
+	DEBUG(@"[dumpDecrypted] socket()");
+	if((IPAServerSock = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
+		NSLog(@"ERROR: socket()");
+		return 0;
+	}
+	
+	// make sure it's quickly reusable
+	DEBUG(@"[dumpDecrypted] setsockopt()");
+	if(setsockopt(IPAServerSock, SOL_SOCKET, SO_REUSEADDR,	(char *) &yes, sizeof(yes)) < 0) {
+		NSLog(@"ERROR: setsockopt()");
+		close(IPAServerSock);
+		return 0;
+	}
+	
+	// listen on all of the hosts interfaces/addresses (0.0.0.0)
+	DEBUG(@"[dumpDecrypted] bind()");
+	memset(&a, 0, sizeof(a));
+	a.sin_port = htons(listenPort);
+	a.sin_addr.s_addr = htonl(INADDR_ANY);
+	a.sin_family = AF_INET;
+	if(bind(IPAServerSock, (struct sockaddr *) &a, sizeof(a)) < 0) {
+		NSLog(@"ERROR: bind()");
+		close(IPAServerSock);
+		return 0;
+	}
+	DEBUG(@"[dumpDecrypted] listen()");
+	listen(IPAServerSock, 10);
+	
+	return IPAServerSock;
+}
+
+-(void)IPAServer:(int)listenPort {
+	unsigned int i;
+	struct sockaddr_in clientAddr;
+	int serverSock, clientSock;
+
+	// get a fresh juicy socket
+	DEBUG(@"[dumpDecrypted] getSocketForPort()");
+	if( ! (serverSock = [self getSocketForPort:listenPort])) {
+		NSLog(@"ERROR: socket()");
+		return;
+	}
+	
+	i = sizeof(clientAddr);
+	
+    NSLog(@"[bfdecrypt] Waiting for connection on port %d\n",listenPort);
+	if((clientSock = accept(serverSock, (struct sockaddr *)&clientAddr, &i)) == -1) {
+		NSLog(@"ERROR: accept(): %s", strerror(errno));
+		return;
+	}
+	
+    NSLog(@"[bfdecrypt] Got connection from remote target %s\n", inet_ntoa(clientAddr.sin_addr));
+    int fd = open([[self IPAPath] UTF8String], O_RDONLY);
+    if(!fd) {
+        NSLog(@"[bfdecrypt] Failed to open the IPA file %@!", [self IPAPath]);
+		return;
+    }
+
+	// I wanted to use sendfile(2), but it's sandboxed by the kernel.
+	char buffer[65535];
+	int loopCount=0, totalBytes=0;
+	DEBUG(@"[bfdecrypt] Entering loop");
+	while (1) {
+		int bytes_read = read(fd, buffer, sizeof(buffer));
+		totalBytes += bytes_read;
+		DEBUG(@"[bfdecrypt] %d: Read %d (%d total) bytes from IPA file", loopCount++, bytes_read, totalBytes);
+		if(bytes_read == 0) // We're done reading from the file
+			break;
+
+		if(bytes_read < 0) {
+			NSLog(@"[bfdecrypt] Failed to read() from IPA file");
+			break;
+		}
+
+		void *p = buffer;
+		while(bytes_read > 0) {
+			DEBUG(@"[bfdecrypt] Sending %d bytes", bytes_read);
+			int bytes_written = send(clientSock, p, bytes_read, 0);
+			if (bytes_written <= 0) {
+				// handle errors
+				NSLog(@"[bfdecrypt] Error sending!");
+				break;
+			}
+			bytes_read -= bytes_written;
+			p += bytes_written;
+		}
+	}
+
+	close(fd);
+	shutdown(clientSock, SHUT_RDWR);
+	shutdown(serverSock, SHUT_RDWR);
+    close(clientSock);
+	close(serverSock);
+}
 
 -(void) createIPAFile {
-	NSString *IPAFile = [NSString stringWithFormat:@"%@/decrypted-app.ipa", [self docPath]];
+	NSString *IPAFile = [self IPAPath];
 	NSString *appDir  = [self appPath];
 	NSString *appCopyDir = [NSString stringWithFormat:@"%@/ipa/Payload/%s", [self docPath], self->appDirName];
 	NSString *zipDir = [NSString stringWithFormat:@"%@/ipa", [self docPath]];
@@ -355,8 +474,37 @@
 	// Clean up. Leave only the .ipa file.
 	[fm removeItemAtPath:zipDir error:nil];
 
-	NSLog(@"[dumpdecrypted] Wrote %s/decrypted-app.ipa", [[self docPath] UTF8String]);
+	NSLog(@"[dumpdecrypted] Wrote %@", [self IPAPath]);
 	return;
 }
+
+
+// https://stackoverflow.com/questions/6807788/how-to-get-ip-address-of-iphone-programmatically
+- (NSString *)getIPAddress {
+
+    NSString *address = @"error";
+    struct ifaddrs *interfaces = NULL;
+    struct ifaddrs *temp_addr = NULL;
+    int success = 0;
+    // retrieve the current interfaces - returns 0 on success
+    success = getifaddrs(&interfaces);
+    if (success == 0) {
+        // Loop through linked list of interfaces
+        temp_addr = interfaces;
+        while(temp_addr != NULL) {
+            if(temp_addr->ifa_addr->sa_family == AF_INET) {
+                // Check if interface is en0 which is the wifi connection on the iPhone
+                if([[NSString stringWithUTF8String:temp_addr->ifa_name] isEqualToString:@"en0"]) {
+                    // Get NSString from C String
+                    address = [NSString stringWithUTF8String:inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr)];
+                }
+            }
+            temp_addr = temp_addr->ifa_next;
+        }
+    }
+    // Free memory
+    freeifaddrs(interfaces);
+    return address;
+} 
 
 @end

@@ -8,8 +8,12 @@
 @property (assign) NSString *appPath;
 @property (assign) NSString *docPath;
 
-- (id)initWithPathToBinary:(NSString *)pathToBinary;
-- (void)createIPAFile;
+-(id)initWithPathToBinary:(NSString *)pathToBinary;
+-(void)createIPAFile;
 -(BOOL)dumpDecryptedImage:(const struct mach_header *)image_mh fileName:(const char *)encryptedImageFilenameStr image:(int)imageNum;
+-(NSString *)IPAPath;
+-(void)IPAServer:(int)listenPort;
+-(int)getSocketForPort:(int)listenPort;
+-(NSString *)getIPAddress;
 
-@end
+	@end
