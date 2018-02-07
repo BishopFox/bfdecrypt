@@ -86,7 +86,7 @@
 	if(p)
 		*p = '\0';
 
-	NSLog(@"[dumpdecrypted] encryptedImagePathStr: %s", encryptedImagePathStr);
+	DEBUG(@"[dumpdecrypted] encryptedImagePathStr: %s", encryptedImagePathStr);
 	
 	NSFileManager *fm = [[NSFileManager alloc] init];
 	NSError *err;
@@ -98,9 +98,9 @@
 	if(p)
 		path = [NSString stringWithFormat:@"%@/%s", path, encryptedImagePathStr];
 
-	NSLog(@"[dumpdecrypted] make_directories making dir: %@", path);
+	DEBUG(@"[dumpdecrypted] make_directories making dir: %@", path);
 	if(! [fm createDirectoryAtPath:path withIntermediateDirectories:true attributes:nil error:&err]) {
-		NSLog(@"[dumpdecrypted] make_directories failed to make directory %@. Error: %@", path, err);
+		DEBUG(@"[dumpdecrypted] WARNING: make_directories failed to make directory %@. Error: %@", path, err);
 	}
 
 	free(savePtr);
@@ -124,10 +124,10 @@
 	/* detect if this is a arm64 binary */
 	if (image_mh->magic == MH_MAGIC_64) {
 		lc = (struct load_command *)((unsigned char *)image_mh + sizeof(struct mach_header_64));
-		NSLog(@"[dumpDecrypted] detected 64bit ARM binary in memory.\n");
+		DEBUG(@"[dumpDecrypted] detected 64bit ARM binary in memory.\n");
 	} else if(image_mh->magic == MH_MAGIC) { /* we might want to check for other errors here, too */
 		lc = (struct load_command *)((unsigned char *)image_mh + sizeof(struct mach_header));
-		//NSLog(@"[+] detected 32bit ARM binary in memory.\n");
+		DEBUG(@"[dumpDecrypted] detected 32bit ARM binary in memory.\n");
 	} else {
 		NSLog(@"[dumpDecrypted] No valid header found!!");
 		return false;
@@ -147,7 +147,7 @@
 
 			/* If this load command is present, but data is not crypted then exit */
 			if (eic->cryptid == 0) {
-				NSLog(@"[+] CryptID = 0!! ");
+				NSLog(@"[dumpDecrypted] CryptID = 0!! ");
 				return false;
 			}
 
@@ -155,35 +155,35 @@
 			[self makeDirectories:encryptedImageFilenameStr];
 
 			off_cryptid=(off_t)((off_t)(void*)&eic->cryptid - (off_t)(void*)image_mh);
-			NSLog(@"[dumpDecrypted] offset to cryptid (%d) found in memory @ %p (from %p). off_cryptid = %u (0x%x)\n", eic->cryptid, &eic->cryptid, image_mh, off_cryptid, off_cryptid);
-			//NSLog(@"[+] Found encrypted data at offset %u 0x%08x. image_mh @ %p. cryptedData @ 0x%x. cryptsize = %u (0x%x) bytes.\n", eic->cryptoff, eic->cryptoff, image_mh, (unsigned int)image_mh + eic->cryptoff, eic->cryptsize, eic->cryptsize);
+			DEBUG(@"[dumpDecrypted] offset to cryptid (%d) found in memory @ %p (from %p). off_cryptid = %u (0x%x)\n", eic->cryptid, &eic->cryptid, image_mh, off_cryptid, off_cryptid);
+			//NSLog(@"[dumpDecrypted] Found encrypted data at offset %u 0x%08x. image_mh @ %p. cryptedData @ 0x%x. cryptsize = %u (0x%x) bytes.\n", eic->cryptoff, eic->cryptoff, image_mh, (unsigned int)image_mh + eic->cryptoff, eic->cryptsize, eic->cryptsize);
 			
-			NSLog(@"[dumpDecrypted] Dumping: %s", encryptedImageFilenameStr);
-			NSLog(@"[dumpDecrypted]    Into: %s", self->decryptedAppPathStr);
+			DEBUG(@"[dumpDecrypted] Dumping: %s", encryptedImageFilenameStr);
+			DEBUG(@"[dumpDecrypted]    Into: %s", self->decryptedAppPathStr);
 			fd = open(encryptedImageFilenameStr, O_RDONLY);
 			if (fd == -1) {
 				NSLog(@"[dumpDecrypted] Failed to open %s", encryptedImageFilenameStr);
 				return false;
 			}
 			
-			NSLog(@"[dumpDecrypted] Reading header");
+			DEBUG(@"[dumpDecrypted] Reading header");
 			n = read(fd, (void *)buffer, sizeof(buffer));
 			if (n != sizeof(buffer)) {
 				NSLog(@"[dumpDecrypted] Warning read only %d of %lu bytes from encrypted file.\n", n, sizeof(buffer));
 				return false;
 			}
 
-			NSLog(@"[dumpDecrypted] Detecting header type\n");
+			DEBUG(@"[dumpDecrypted] Detecting header type\n");
 			fh = (struct fat_header *)buffer;
 			
 			/* Is this a FAT file - we assume the right endianess */
 			if (fh->magic == FAT_CIGAM) {
-				NSLog(@"[dumpDecrypted] Executable is a FAT image - searching for right architecture\n");
+				DEBUG(@"[dumpDecrypted] Executable is a FAT image - searching for right architecture\n");
 				arch = (struct fat_arch *)&fh[1];
 				for (i=0; i<swap32(fh->nfat_arch); i++) {
 					if ((image_mh->cputype == swap32(arch->cputype)) && (image_mh->cpusubtype == swap32(arch->cpusubtype))) {
 						fileoffs = swap32(arch->offset);
-						NSLog(@"[dumpDecrypted] Correct arch is at offset 0x%x in the file.\n", fileoffs);
+						DEBUG(@"[dumpDecrypted] Correct arch is at offset 0x%x in the file.\n", fileoffs);
 						break;
 					}
 					arch++;
@@ -193,13 +193,13 @@
 					return false;
 				}
 			} else if (fh->magic == MH_MAGIC || fh->magic == MH_MAGIC_64) {
-				NSLog(@"[dumpDecrypted] Executable is a plain MACH-O image, fileoffs = 0\n");
+				DEBUG(@"[dumpDecrypted] Executable is a plain MACH-O image, fileoffs = 0\n");
 			} else {
 				NSLog(@"[dumpDecrypted] Executable is of unknown type, fileoffs = 0\n");
 				return false;
 			}
 
-			NSLog(@"[dumpDecrypted] Opening %s for writing.\n", decryptedAppPathStr);
+			DEBUG(@"[dumpDecrypted] Opening %s for writing.\n", decryptedAppPathStr);
 			outfd = open(decryptedAppPathStr, O_RDWR|O_CREAT|O_TRUNC, 0644);
 			if (outfd == -1) {
 				NSLog(@"[dumpDecrypted] Failed opening: ");
@@ -210,10 +210,10 @@
 			n = fileoffs + eic->cryptoff;
 			
 			restsize = lseek(fd, 0, SEEK_END) - n - eic->cryptsize;		
-			//NSLog(@"[+] restsize = %u, n = %u, cryptsize = %u, total = %u", restsize, n, eic->cryptsize, n + eic->cryptsize + restsize);
+			//NSLog(@"[dumpDecrypted] restsize = %u, n = %u, cryptsize = %u, total = %u", restsize, n, eic->cryptsize, n + eic->cryptsize + restsize);
 			lseek(fd, 0, SEEK_SET);
 			
-			//NSLog(@"[+] Copying the not encrypted start of the file (%u bytes)\n", n);
+			DEBUG(@"[dumpDecrypted] Copying the not encrypted start of the file (%u bytes)\n", n);
 			
 			/* first copy all the data before the encrypted data */
 			char *buf = (char *)malloc((size_t)n);
@@ -231,7 +231,7 @@
 
 			/* now write the previously encrypted data */
 
-			NSLog(@"[+] Dumping the decrypted data into the file (%u bytes)\n", eic->cryptsize);
+			DEBUG(@"[dumpDecrypted] Dumping the decrypted data into the file (%u bytes)\n", eic->cryptsize);
 			r = write(outfd, (unsigned char *)image_mh + eic->cryptoff, eic->cryptsize);
 			if (r != eic->cryptsize) {
 				NSLog(@"[dumpDecrypted] Error writing encrypted part of file\n");
@@ -239,29 +239,25 @@
 			}
 			
 			/* and finish with the remainder of the file */
-			NSLog(@"[+] Copying the not encrypted remainder of the file (%u bytes)\n", restsize);
+			DEBUG(@"[dumpDecrypted] Copying the not encrypted remainder of the file (%u bytes)\n", restsize);
 			lseek(fd, eic->cryptsize, SEEK_CUR);
-			NSLog(@"[+] malloc");
 			buf = (char *)malloc((size_t)restsize);
-			NSLog(@"[+] read");
 			r = read(fd, buf, restsize);
 			if (r != restsize) {
 				NSLog(@"[dumpDecrypted] Error reading rest of file, got %u bytes\n", r);
 				return false;
 			}
-			NSLog(@"[+] write");
 			r = write(outfd, buf, restsize);
 			if (r != restsize) {
 				NSLog(@"[dumpDecrypted] Error writing rest of file\n");
 				return false;
 			}
-			NSLog(@"[+] free");
 			free(buf);
 
 			if (off_cryptid) {
 				uint32_t zero=0;
 				off_cryptid += fileoffs;
-				NSLog(@"[+] Setting the LC_ENCRYPTION_INFO->cryptid to 0 at offset 0x%x (0x%x into file)\n", off_cryptid, off_cryptid + fileoffs);
+				DEBUG(@"[dumpDecrypted] Setting the LC_ENCRYPTION_INFO->cryptid to 0 at offset 0x%x (0x%x into file)\n", off_cryptid, off_cryptid + fileoffs);
 				if (lseek(outfd, off_cryptid, SEEK_SET) == off_cryptid) {
 					if(write(outfd, &zero, 4) != 4) {
 						NSLog(@"[dumpDecrypted] Error writing cryptid value!!\n");
@@ -273,18 +269,16 @@
 				}
 			}
 	
-			NSLog(@"[+] Close files.\n");	
 			close(fd);
 			close(outfd);
 			sync();
-			NSLog(@"[+] Dump complete.\n");	
 			
 			return true;
 		}
 		
 		lc = (struct load_command *)((unsigned char *)lc+lc->cmdsize);		
 	}
-	NSLog(@"[!] This mach-o file is not encrypted. Nothing was decrypted.\n");
+	DEBUG(@"[!] This mach-o file is not encrypted. Nothing was decrypted.\n");
 	return false;
 }
 
@@ -296,7 +290,7 @@
 
 	NSLog(@"[dumpDecrypted] There are %d images mapped.", numberOfImages);
 	for(int i = 0; i < numberOfImages; i++) {
-		NSLog(@"[dumpDecrypted] image %d", i);
+		DEBUG(@"[dumpDecrypted] image %d", i);
 		image_mh = (struct mach_header *)_dyld_get_image_header(i);
 		const char *imageName = _dyld_get_image_name(i);
 
@@ -305,7 +299,7 @@
 
 		// Attempt to decrypt any image loaded from the app's Bundle directory.
 		// This covers the app binary, frameworks, extensions, etc etc
-		NSLog(@"[dumpDecrypted] Comparing %s to %s", imageName, appPath);
+		DEBUG(@"[dumpDecrypted] Comparing %s to %s", imageName, appPath);
 		if(strstr(imageName, appPath) != NULL) {
 			NSLog(@"[dumpDecrypted] Dumping image %d: %s", i, imageName);
 			[self dumpDecryptedImage:image_mh fileName:imageName image:i];
@@ -450,10 +444,12 @@
 	// Replace encrypted binaries with decrypted versions
 	NSLog(@"[dumpDecrypted] ======== START DECRYPTION PROCESS ========");
 	[self dumpDecrypted];
+	NSLog(@"[dumpDecrypted] ======== DECRYPTION COMPLETE  ========");
 
 	// ZIP it up
 	NSLog(@"[dumpDecrypted] ======== STARTING ZIP ========");
-	NSLog(@"[dumpDecrypted] IPAFile: %@   //   zipDir: %@", IPAFile, zipDir);
+	NSLog(@"[dumpDecrypted] IPA file: %@", IPAFile);
+	NSLog(@"[dumpDecrypted] ZIP dir: %@", zipDir);
 	unlink([IPAFile UTF8String]);
 	@try {
 		BOOL success = [SSZipArchive createZipFileAtPath:IPAFile 
@@ -464,25 +460,25 @@
 										AES:NO
 										progressHandler:nil
 		];
-		NSLog(@"[dumpDecrypted] ZIP status: %s", (success)?"success":"failed");
+		NSLog(@"[dumpDecrypted] ========  ZIP operation complete: %s ========", (success)?"success":"failed");
 	}
 	@catch(NSException *e) {
-		NSLog(@"[dumpDecrypted] BAAAAAAAARF!!! , %@", e);
+		NSLog(@"[dumpDecrypted] BAAAAAAAARF during ZIP operation!!! , %@", e);
 	}
 	
 
 	// Clean up. Leave only the .ipa file.
 	[fm removeItemAtPath:zipDir error:nil];
 
-	NSLog(@"[dumpdecrypted] Wrote %@", [self IPAPath]);
+	NSLog(@"[dumpDecrypted] ======== Wrote %@ ========", [self IPAPath]);
 	return;
 }
 
 
+// Slightly tweaked version of this:
 // https://stackoverflow.com/questions/6807788/how-to-get-ip-address-of-iphone-programmatically
-- (NSString *)getIPAddress {
-
-    NSString *address = @"error";
+- (NSDictionary *)getIPAddresses {
+	NSMutableDictionary *addresses = [[NSMutableDictionary alloc] init];
     struct ifaddrs *interfaces = NULL;
     struct ifaddrs *temp_addr = NULL;
     int success = 0;
@@ -493,18 +489,17 @@
         temp_addr = interfaces;
         while(temp_addr != NULL) {
             if(temp_addr->ifa_addr->sa_family == AF_INET) {
+				DEBUG(@"Got IF %s  // ip: %s", temp_addr->ifa_name, inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr));
                 // Check if interface is en0 which is the wifi connection on the iPhone
-                if([[NSString stringWithUTF8String:temp_addr->ifa_name] isEqualToString:@"en0"]) {
-                    // Get NSString from C String
-                    address = [NSString stringWithUTF8String:inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr)];
-                }
+				[addresses 	setValue:[NSString stringWithUTF8String:inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr)]
+							forKey:[NSString stringWithUTF8String:temp_addr->ifa_name]];
             }
             temp_addr = temp_addr->ifa_next;
         }
     }
     // Free memory
     freeifaddrs(interfaces);
-    return address;
+    return addresses;
 } 
 
 @end

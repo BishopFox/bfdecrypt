@@ -14,6 +14,6 @@
 -(NSString *)IPAPath;
 -(void)IPAServer:(int)listenPort;
 -(int)getSocketForPort:(int)listenPort;
--(NSString *)getIPAddress;
+-(NSDictionary *)getIPAddresses;
 
 	@end
