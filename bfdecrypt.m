@@ -137,11 +137,12 @@ __attribute__ ((constructor)) static void bfinject_rocknroll() {
                                     } else {
                                         close(s);
                                         NSLog(@"[bfdecrypt] Yes we can, starting now.");
+					[dd IPAServer:PORT];
+
                                         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                                             [kw removeFromSuperview];
                                             kw.hidden = YES;
                                             [kw release];
-                                            [dd IPAServer:PORT];
                                         });
                                         NSLog(@"[bfdecrypt] IPAServer finished.");
                                     }
